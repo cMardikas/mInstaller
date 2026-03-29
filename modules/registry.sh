@@ -14,6 +14,15 @@
 #   MODULE_<ID>_FILE     — path to the module script (relative to MINSTALLER_ROOT)
 
 # ---------------------------------------------------------------------------
+# Clear inherited MODULE_* environment variables so callers cannot override
+# registry entries via env_keep / sudo -E / exported shell variables.
+# ---------------------------------------------------------------------------
+while IFS= read -r _minstaller_var; do
+    unset "${_minstaller_var}"
+done < <(compgen -A variable | grep '^MODULE_')
+unset _minstaller_var
+
+# ---------------------------------------------------------------------------
 # Module list — edit this array to register/deregister modules
 # ---------------------------------------------------------------------------
 MINSTALLER_MODULES=(
@@ -76,9 +85,15 @@ registry_source_module() {
         die "registry: no file registered for module '${id}'"
     fi
 
-    local full_path="${MINSTALLER_ROOT}/${file}"
-    if [[ ! -f "${full_path}" ]]; then
-        die "registry: module file not found: ${full_path}"
+    local full_path
+    full_path="$(readlink -f "${MINSTALLER_ROOT}/${file}")"
+
+    if [[ -z "${full_path}" || ! -f "${full_path}" ]]; then
+        die "registry: module file not found: ${MINSTALLER_ROOT}/${file}"
+    fi
+
+    if [[ "${full_path}" != "${MINSTALLER_ROOT}/modules/"* ]]; then
+        die "registry: refusing to source module outside ${MINSTALLER_ROOT}/modules: ${full_path}"
     fi
 
     # shellcheck disable=SC1090

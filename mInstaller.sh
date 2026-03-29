@@ -235,17 +235,35 @@ run_make_unprivileged() {
     fi
 
     if command -v runuser &>/dev/null; then
-        runuser -u "${build_user}" -- bash -lc "${build_cmd}" bash "${build_dir}" \
+        runuser -u "${build_user}" -- bash --noprofile --norc -c "${build_cmd}" bash "${build_dir}" \
             || die "${module_name} build failed"
     elif command -v sudo &>/dev/null; then
-        sudo -u "${build_user}" HOME="${build_dir}" bash -lc "${build_cmd}" bash "${build_dir}" \
+        sudo -u "${build_user}" HOME="${build_dir}" bash --noprofile --norc -c "${build_cmd}" bash "${build_dir}" \
             || die "${module_name} build failed"
     else
         rm -rf "${build_dir}"
         die "Neither runuser nor sudo is available for unprivileged builds."
     fi
 
-    cp "${build_dir}/${artifact_relpath}" "${dest_path}" \
+    local artifact_path
+    artifact_path="${build_dir}/${artifact_relpath}"
+
+    if [[ ! -e "${artifact_path}" ]]; then
+        rm -rf "${build_dir}"
+        die "Built artifact for ${module_name} is missing: ${artifact_path}"
+    fi
+
+    if [[ -L "${artifact_path}" ]]; then
+        rm -rf "${build_dir}"
+        die "Refusing to install ${module_name}: built artifact is a symlink (${artifact_path})"
+    fi
+
+    if [[ ! -f "${artifact_path}" ]]; then
+        rm -rf "${build_dir}"
+        die "Refusing to install ${module_name}: built artifact is not a regular file (${artifact_path})"
+    fi
+
+    cp --no-dereference "${artifact_path}" "${dest_path}" \
         || { rm -rf "${build_dir}"; die "Failed to copy built artifact for ${module_name}"; }
     rm -rf "${build_dir}"
 }

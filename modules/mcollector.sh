@@ -119,7 +119,7 @@ module_mcollector_install() {
         log_dryrun "[build] copy built artifact 'mCollector' to '${_MC_BINARY}'"
     else
         run_make_unprivileged "mcollector" "${_MC_SRC_DIR}" "mCollector" "${_MC_BINARY}" 1
-        chmod 755 "${_MC_BINARY}"
+        chmod 750 "${_MC_BINARY}"
         log_ok "Build complete"
     fi
 
@@ -130,12 +130,13 @@ module_mcollector_install() {
     # --- 5. Copy binary and assets --------------------------------------------
     log_step "mCollector — Installing binary and required files"
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-        log_dryrun "[install] cp '${_MC_SRC_DIR}/mCollector' '${_MC_BINARY}'"
+        log_dryrun "[build] install built mCollector binary at '${_MC_BINARY}' with mode 750"
         log_dryrun "[install] cp '${_MC_SRC_DIR}/index.html' '${_MC_INDEX_HTML}'"
         log_dryrun "[install] cp '${_MC_SRC_DIR}/mCollector.ps1' '${_MC_PS1}'"
     else
         [[ -f "${_MC_BINARY}" ]] \
             || die "Built mCollector binary not found at '${_MC_BINARY}'"
+        chmod 750 "${_MC_BINARY}"
 
         [[ -f "${_MC_SRC_DIR}/index.html" ]] \
             && cp "${_MC_SRC_DIR}/index.html" "${_MC_INDEX_HTML}"
@@ -175,6 +176,7 @@ module_mcollector_install() {
         system_setcap "cap_net_bind_service=+ep" "${_MC_BINARY}"
     else
         log_warn "setcap not found. Binary will require root to bind privileged ports."
+        log_warn "mCollector is installed with restricted execute permissions (mode 750). Adjust them manually only if you understand the security impact."
     fi
 
     # --- 8. Manual run guidance -----------------------------------------------
