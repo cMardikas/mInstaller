@@ -12,12 +12,10 @@
 #   5. Keep only /opt/mScreenshot/src as a subfolder; place runtime files at
 #      the root of /opt/mScreenshot.
 #   6. Copy the built binary and required helper files beside src/.
-#   7. Create /opt/mScreenshot/reports for output.
-#   8. Copy the required `scripts/` directory and `nmap-bootstrap.xsl` out of
+#   7. Copy the required `scripts/` directory and `nmap-bootstrap.xsl` out of
 #      src into the install root.
-#   9. Create /usr/local/bin/mscreenshot symlink.
-#  10. Patch chromium binary path symlink if needed.
-#  11. Finish with manual-run guidance only. No service or timer is installed.
+#   8. Do not create extra runtime directories or symlinks.
+#   9. Keep the install manual-run only. No service or timer is installed.
 #
 # Requires: lib/{log,apt,git,system,preflight}.sh sourced.
 # Globals read: DRY_RUN, NONINTERACTIVE, MINSTALLER_ROOT
@@ -29,10 +27,8 @@ _MS_REPO_URL="https://github.com/cMardikas/mScreenshot.git"
 _MS_OPT_DIR="/opt/mScreenshot"
 _MS_SRC_DIR="${_MS_OPT_DIR}/src"
 _MS_BINARY="${_MS_OPT_DIR}/mScreenshot"
-_MS_REPORTS_DIR="${_MS_OPT_DIR}/reports"
 _MS_RUNTIME_SCRIPTS_DIR="${_MS_OPT_DIR}/scripts"
 _MS_XSLT="${_MS_OPT_DIR}/nmap-bootstrap.xsl"
-_MS_SYMLINK="/usr/local/bin/mscreenshot"
 
 _MS_APT_PACKAGES=(
     build-essential
@@ -63,25 +59,17 @@ module_mscreenshot_preflight() {
 }
 
 # ---------------------------------------------------------------------------
-# _ms_fix_chromium_symlink — patch /usr/bin/chromium if missing
+# _ms_check_chromium_path — warn if expected Chromium binary path is missing
 # ---------------------------------------------------------------------------
-_ms_fix_chromium_symlink() {
-    if [[ -x /usr/bin/chromium ]]; then
-        log_debug "Chromium at /usr/bin/chromium — OK"
+_ms_check_chromium_path() {
+    if [[ -x /usr/bin/chromium || -x /usr/bin/chromium-browser || -x /usr/bin/google-chrome ]]; then
+        log_debug "A Chromium-compatible browser binary is present"
         return 0
     fi
 
-    if [[ -x /usr/bin/chromium-browser ]]; then
-        log_warn "/usr/bin/chromium not found; creating symlink from /usr/bin/chromium-browser"
-        system_symlink /usr/bin/chromium-browser /usr/bin/chromium
-    elif [[ -x /usr/bin/google-chrome ]]; then
-        log_warn "/usr/bin/chromium not found; creating symlink from /usr/bin/google-chrome"
-        system_symlink /usr/bin/google-chrome /usr/bin/chromium
-    else
-        log_warn \
-            "Chromium binary not found at /usr/bin/chromium, /usr/bin/chromium-browser, or /usr/bin/google-chrome. " \
-            "Screenshots will fail. Install chromium via apt or set the path manually in /opt/mScreenshot/src/scripts/screenshot.py"
-    fi
+    log_warn \
+        "Chromium binary not found at /usr/bin/chromium, /usr/bin/chromium-browser, or /usr/bin/google-chrome. " \
+        "Screenshots will fail until you install chromium or adjust the path manually in /opt/mScreenshot/src/scripts/screenshot.py"
 }
 
 # ---------------------------------------------------------------------------
@@ -126,8 +114,8 @@ module_mscreenshot_install() {
         if [[ -d "${_MS_SRC_DIR}/scripts" ]]; then
             rm -rf "${_MS_RUNTIME_SCRIPTS_DIR}"
             cp -R "${_MS_SRC_DIR}/scripts" "${_MS_RUNTIME_SCRIPTS_DIR}"
-            chmod 0755 "${_MS_RUNTIME_SCRIPTS_DIR}"
-            chmod 0644 "${_MS_RUNTIME_SCRIPTS_DIR}/"* 2>/dev/null || true
+            find "${_MS_RUNTIME_SCRIPTS_DIR}" -type d -exec chmod 0755 {} +
+            find "${_MS_RUNTIME_SCRIPTS_DIR}" -type f -exec chmod 0644 {} +
         fi
         [[ -f "${_MS_SRC_DIR}/nmap-bootstrap.xsl" ]] && {
             cp "${_MS_SRC_DIR}/nmap-bootstrap.xsl" "${_MS_XSLT}"
@@ -138,33 +126,21 @@ module_mscreenshot_install() {
         log_dryrun "[install] cp '${_MS_SRC_DIR}/mScreenshot' '${_MS_BINARY}'"
         log_dryrun "[install] cp -R '${_MS_SRC_DIR}/scripts' '${_MS_RUNTIME_SCRIPTS_DIR}'"
         log_dryrun "[install] cp '${_MS_SRC_DIR}/nmap-bootstrap.xsl' '${_MS_XSLT}'"
-        log_dryrun "[system] chmod 0755 '${_MS_OPT_DIR}' '${_MS_BINARY}' '${_MS_RUNTIME_SCRIPTS_DIR}'"
-        log_dryrun "[system] chmod 0644 '${_MS_RUNTIME_SCRIPTS_DIR}/'* '${_MS_XSLT}'"
+        log_dryrun "[system] chmod 0755 '${_MS_OPT_DIR}' '${_MS_BINARY}'"
+        log_dryrun "[system] find '${_MS_RUNTIME_SCRIPTS_DIR}' -type d -exec chmod 0755 {} +"
+        log_dryrun "[system] find '${_MS_RUNTIME_SCRIPTS_DIR}' -type f -exec chmod 0644 {} +"
+        log_dryrun "[system] chmod 0644 '${_MS_XSLT}'"
     fi
 
-    # --- 5. Reports directory --------------------------------------------------
-    log_step "mScreenshot — Creating reports directory"
-    system_mkdir "${_MS_REPORTS_DIR}" "" ""
-    if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-        log_dryrun "[system] chmod 755 '${_MS_REPORTS_DIR}'"
-    else
-        chmod 755 "${_MS_REPORTS_DIR}"
-    fi
-
-    # --- 6. PATH symlink -------------------------------------------------------
-    log_step "mScreenshot — Creating PATH symlink"
-    system_symlink "${_MS_BINARY}" "${_MS_SYMLINK}"
-
-    # --- 7. Chromium path fix (if needed) -------------------------------------
+    # --- 5. Chromium path check -----------------------------------------------
     log_step "mScreenshot — Checking Chromium binary path"
-    _ms_fix_chromium_symlink
+    _ms_check_chromium_path
 
-    # --- 8. Manual run guidance -----------------------------------------------
+    # --- 6. Manual run guidance -----------------------------------------------
     log_ok "mScreenshot installation complete."
-    log_warn "The required scripts/ directory and nmap-bootstrap.xsl were copied out of src."
-    log_warn "To run a scan manually:"
-    log_warn "  cd /opt/mScreenshot/reports"
-    log_warn "  sudo mscreenshot -d '<description>' <target>"
+    log_warn "The full scripts/ directory tree and nmap-bootstrap.xsl were copied out of src."
+    log_warn "To run a scan manually from your chosen working directory:"
+    log_warn "  sudo /opt/mScreenshot/mScreenshot -d '<description>' <target>"
     log_warn "If chromium/screenshot.py still fails, check /dev/shm size and AppArmor:"
     log_warn "  mount | grep shm"
     log_warn "  aa-status | grep chromium"

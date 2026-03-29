@@ -41,7 +41,7 @@ mInstaller/
 │   ├── log.sh              # Logging helpers (log_info, log_warn, log_error, die, …)
 │   ├── apt.sh              # apt_update, apt_install (idempotent)
 │   ├── git.sh              # git_clone_or_update
-│   ├── system.sh           # Directory/symlink/chmod/chown/setcap helpers
+│   ├── system.sh           # Directory/chmod/chown/setcap helpers
 │   └── preflight.sh        # Root check, port/service conflict checks, OS check
 ├── modules/
 │   ├── registry.sh         # Module manifest + source/validate helpers
@@ -57,7 +57,7 @@ mInstaller/
 | `log.sh` | Colour-aware logging (`log_info`, `log_warn`, `log_error`, `log_step`, `log_dryrun`, `log_safety_warn`, `die`). Output goes to stderr. |
 | `apt.sh` | `apt_update` (skips if cache is fresh), `apt_install` (skips already-installed packages). |
 | `git.sh` | `git_clone_or_update` — clones if absent, pulls `--ff-only` if already present. |
-| `system.sh` | `system_mkdir`, `system_symlink`, `system_chown`, `system_chmod`, `system_setcap`, `system_copy_file` and related filesystem helpers. |
+| `system.sh` | `system_mkdir`, `system_chown`, `system_chmod`, `system_setcap`, `system_copy_file` and related filesystem helpers. |
 | `preflight.sh` | `preflight_require_root`, `preflight_require_command`, `preflight_check_port_tcp/udp`, `preflight_check_service_conflict`, `preflight_warn_privileged_ports`, `preflight_check_disk_space`, `preflight_check_os`. |
 
 ### Module Layer (`modules/`)
@@ -190,16 +190,14 @@ sudo /opt/mCollector/mCollector --clear
 4. Creates a flat runtime layout under `/opt/mScreenshot` with only `src/` as a subfolder.
 5. Copies the built binary to `/opt/mScreenshot/mScreenshot`.
 6. Copies `scripts/` and `nmap-bootstrap.xsl` out of `src` into the install root.
-7. Creates `/opt/mScreenshot/reports/` for output.
-8. Symlinks the binary to `/usr/local/bin/mscreenshot`.
-9. Patches `/usr/bin/chromium` symlink if the binary is under a different name.
-10. Finishes with manual run guidance only. It does not register a service or timer.
+7. Does not create extra runtime directories or symlinks.
+8. Checks whether a Chromium-compatible browser path exists.
+9. Finishes with manual run guidance only. It does not register a service or timer.
 
 **Post-install usage:**
 ```bash
 # Basic scan
-cd /opt/mScreenshot/reports
-sudo mscreenshot -d "test" 10.1.0.1
+sudo /opt/mScreenshot/mScreenshot -d "test" 10.1.0.1
 ```
 
 ---
@@ -265,7 +263,7 @@ That's all. No changes to `install.sh` or any other file are required.
 Activate with `--dry-run` or `-n`. In dry-run mode:
 
 - All library functions print what they **would** do instead of executing.
-- apt commands, git operations, file writes, chmod/chown, symlink creation, and setcap operations are all skipped.
+- apt commands, git operations, file writes, chmod/chown, and setcap operations are all skipped.
 - Destructive or system-changing actions are printed, not executed.
 - The dry-run output can be used as a human-readable change plan.
 
