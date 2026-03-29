@@ -8,12 +8,12 @@
 #   2. Install build-time apt packages (build-essential, libssl-dev, git).
 #   3. Clone (or update) the mCollector repository to /opt/mCollector/src.
 #   4. Build the binary with make.
-#   5. Create the runtime directory layout under /opt/mCollector/.
-#   6. Copy binary and web assets into their install locations.
-#   7. Create symlinks in /opt/mCollector/data/ for index.html and ps1 script.
-#   8. Create the 'mcollector' system user and set permissions.
-#   9. Set CAP_NET_BIND_SERVICE on the binary (so it can run as non-root).
-#  10. Finish with manual-run guidance only. No service unit is installed.
+#   5. Keep only /opt/mCollector/src as a subfolder; place runtime files at
+#      the root of /opt/mCollector.
+#   6. Copy the binary and required web/runtime files beside src/.
+#   7. Set file permissions without creating any dedicated system user.
+#   8. Set CAP_NET_BIND_SERVICE on the binary (so it can run as non-root).
+#   9. Finish with manual-run guidance only. No service unit is installed.
 #
 # Conflicting services (printed and optionally disabled):
 #   systemd-resolved (port 5355/UDP LLMNR)
@@ -21,7 +21,7 @@
 #   avahi-daemon     (port 5353/UDP mDNS)
 #   apache2 / nginx  (ports 80/443/TCP)
 #
-# Requires: lib/{log,apt,git,system,systemd,preflight}.sh sourced.
+# Requires: lib/{log,apt,git,system,preflight}.sh sourced.
 # Globals read: DRY_RUN, NONINTERACTIVE, MINSTALLER_ROOT
 
 # ---------------------------------------------------------------------------
@@ -30,12 +30,13 @@
 _MC_REPO_URL="https://github.com/cMardikas/mCollector.git"
 _MC_OPT_DIR="/opt/mCollector"
 _MC_SRC_DIR="${_MC_OPT_DIR}/src"
-_MC_ETC_DIR="${_MC_OPT_DIR}/etc/tls"
-_MC_WWW_DIR="${_MC_OPT_DIR}/www"
-_MC_DATA_DIR="${_MC_OPT_DIR}/data"
-_MC_UPLOADS_DIR="${_MC_DATA_DIR}/uploads"
+_MC_TLS_CERT="${_MC_OPT_DIR}/cert.pem"
+_MC_TLS_KEY="${_MC_OPT_DIR}/key.pem"
+_MC_INDEX_HTML="${_MC_OPT_DIR}/index.html"
+_MC_PS1="${_MC_OPT_DIR}/mCollector.ps1"
+_MC_UPLOADS_DIR="${_MC_OPT_DIR}/uploads"
 _MC_BINARY="${_MC_OPT_DIR}/mCollector"
-_MC_SERVICE_USER="mcollector"
+_MC_HASHES_FILE="${_MC_UPLOADS_DIR}/hashes.txt"
 
 # ---------------------------------------------------------------------------
 # _mc_conflicting_services — associative description of conflicts
@@ -123,60 +124,53 @@ module_mcollector_install() {
     fi
 
     # --- 4. Runtime layout ----------------------------------------------------
-    log_step "mCollector — Creating runtime layout"
-    system_mkdir "${_MC_ETC_DIR}"      "root:root" "750"
-    system_mkdir "${_MC_WWW_DIR}"      "root:root" "755"
-    system_mkdir "${_MC_DATA_DIR}"     ""          ""    # owned after user creation
-    system_mkdir "${_MC_UPLOADS_DIR}"  ""          ""
+    log_step "mCollector — Creating flat runtime layout"
+    system_mkdir "${_MC_UPLOADS_DIR}"  ""  ""
 
     # --- 5. Copy binary and assets --------------------------------------------
-    log_step "mCollector — Installing binary and web assets"
+    log_step "mCollector — Installing binary and required files"
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
         log_dryrun "[install] cp '${_MC_SRC_DIR}/mCollector' '${_MC_BINARY}'"
-        log_dryrun "[install] cp '${_MC_SRC_DIR}/index.html' '${_MC_WWW_DIR}/'"
-        log_dryrun "[install] cp '${_MC_SRC_DIR}/mCollector.ps1' '${_MC_WWW_DIR}/'"
+        log_dryrun "[install] cp '${_MC_SRC_DIR}/index.html' '${_MC_INDEX_HTML}'"
+        log_dryrun "[install] cp '${_MC_SRC_DIR}/mCollector.ps1' '${_MC_PS1}'"
     else
-        cp "${_MC_SRC_DIR}/mCollector"    "${_MC_BINARY}" \
+        cp "${_MC_SRC_DIR}/mCollector" "${_MC_BINARY}" \
             || die "Failed to copy mCollector binary"
         chmod 755 "${_MC_BINARY}"
 
-        # Copy web assets if they exist in the source tree
         [[ -f "${_MC_SRC_DIR}/index.html" ]] \
-            && cp "${_MC_SRC_DIR}/index.html"      "${_MC_WWW_DIR}/"
+            && cp "${_MC_SRC_DIR}/index.html" "${_MC_INDEX_HTML}"
         [[ -f "${_MC_SRC_DIR}/mCollector.ps1" ]] \
-            && cp "${_MC_SRC_DIR}/mCollector.ps1"  "${_MC_WWW_DIR}/"
-        log_ok "Binary and assets installed"
+            && cp "${_MC_SRC_DIR}/mCollector.ps1" "${_MC_PS1}"
+        log_ok "Binary and runtime files installed"
     fi
 
-    # --- 6. Symlinks in data dir ----------------------------------------------
-    log_step "mCollector — Creating data-directory symlinks"
-    system_symlink "../www/index.html"       "${_MC_DATA_DIR}/index.html"
-    system_symlink "../www/mCollector.ps1"   "${_MC_DATA_DIR}/mCollector.ps1"
-
-    # --- 7. System user -------------------------------------------------------
-    log_step "mCollector — Creating service user"
-    system_create_user "${_MC_SERVICE_USER}" "${_MC_OPT_DIR}"
-
-    # --- 8. Permissions -------------------------------------------------------
+    # --- 6. Permissions -------------------------------------------------------
     log_step "mCollector — Setting permissions"
-    system_chown "${_MC_SERVICE_USER}:${_MC_SERVICE_USER}" "${_MC_DATA_DIR}"    1
-    system_chmod "750" "${_MC_DATA_DIR}"
-    system_chown "root:${_MC_SERVICE_USER}" "${_MC_ETC_DIR}"
+    system_chmod "750" "${_MC_UPLOADS_DIR}"
 
-    # Pre-touch hashes.txt with correct perms if it doesn't exist
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-        log_dryrun "[install] touch '${_MC_UPLOADS_DIR}/hashes.txt' (if absent)"
+        log_dryrun "[install] touch '${_MC_HASHES_FILE}' (if absent)"
+        log_dryrun "[system] chmod '640' '${_MC_HASHES_FILE}'"
     else
-        if [[ ! -f "${_MC_UPLOADS_DIR}/hashes.txt" ]]; then
-            touch "${_MC_UPLOADS_DIR}/hashes.txt"
+        if [[ ! -f "${_MC_HASHES_FILE}" ]]; then
+            touch "${_MC_HASHES_FILE}"
         fi
-        chown "${_MC_SERVICE_USER}:${_MC_SERVICE_USER}" "${_MC_UPLOADS_DIR}/hashes.txt"
-        chmod 640 "${_MC_UPLOADS_DIR}/hashes.txt"
-        chown "${_MC_SERVICE_USER}:${_MC_SERVICE_USER}" "${_MC_UPLOADS_DIR}"
-        chmod 750 "${_MC_UPLOADS_DIR}"
+        chmod 640 "${_MC_HASHES_FILE}"
     fi
 
-    # --- 9. CAP_NET_BIND_SERVICE on binary ------------------------------------
+    # Optional TLS materials, if later added manually
+    if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+        log_dryrun "[system] if present, chmod '640' '${_MC_TLS_CERT}' '${_MC_TLS_KEY}'"
+    else
+        for _tls_file in "${_MC_TLS_CERT}" "${_MC_TLS_KEY}"; do
+            if [[ -f "${_tls_file}" ]]; then
+                chmod 640 "${_tls_file}"
+            fi
+        done
+    fi
+
+    # --- 7. CAP_NET_BIND_SERVICE on binary ------------------------------------
     log_step "mCollector — Setting capabilities on binary"
     if command -v setcap &>/dev/null; then
         system_setcap "cap_net_bind_service=+ep" "${_MC_BINARY}"
@@ -184,11 +178,11 @@ module_mcollector_install() {
         log_warn "setcap not found. Binary will require root to bind privileged ports."
     fi
 
-    # --- 10. Manual run guidance ----------------------------------------------
+    # --- 8. Manual run guidance -----------------------------------------------
     log_ok "mCollector installation complete."
     log_warn "No service was installed, enabled, or started."
     log_warn "Resolve any conflicting services (see preflight output) then run manually if needed:"
-    log_warn "  cd ${_MC_DATA_DIR}"
+    log_warn "  cd ${_MC_OPT_DIR}"
     log_warn "  sudo ${_MC_BINARY}"
     log_warn "To clear captured uploads manually:"
     log_warn "  sudo ${_MC_BINARY} --clear"
