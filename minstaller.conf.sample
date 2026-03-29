@@ -1,0 +1,78 @@
+# minstaller.conf.sample — Sample configuration file for mInstaller
+#
+# This file is NOT automatically loaded by install.sh.
+# To use it, source it before running the installer, or adapt it into
+# a wrapper script. All values shown are defaults.
+#
+# Usage:
+#   source ./minstaller.conf.sample
+#   sudo ./install.sh all
+#
+# Or as a wrapper:
+#   #!/usr/bin/env bash
+#   set -euo pipefail
+#   source "$(dirname "$0")/minstaller.conf.sample"
+#   sudo "$(dirname "$0")/install.sh" --noninteractive "$@"
+
+# ---------------------------------------------------------------------------
+# Global installer behaviour
+# ---------------------------------------------------------------------------
+
+# Set to 1 to simulate all actions without making changes.
+# Equivalent to passing --dry-run on the CLI.
+export DRY_RUN=0
+
+# Set to 1 to answer 'yes' to all interactive prompts automatically.
+# Equivalent to passing --noninteractive on the CLI.
+export NONINTERACTIVE=0
+
+# Logging verbosity.
+# 0=ERROR, 1=WARN, 2=INFO (default), 3=DEBUG
+export MINSTALLER_LOG_LEVEL=2
+
+# ---------------------------------------------------------------------------
+# mCollector module settings
+# ---------------------------------------------------------------------------
+
+# Source repository URL. Override if using a fork.
+# export MCOLLECTOR_REPO_URL="https://github.com/cMardikas/mCollector.git"
+
+# Install base directory. Source is checked out into "${MCOLLECTOR_OPT_DIR}/src".
+# export MCOLLECTOR_OPT_DIR="/opt/mCollector"
+
+# System service user created by the installer.
+# export MCOLLECTOR_SERVICE_USER="mcollector"
+
+# ---------------------------------------------------------------------------
+# mScreenshot module settings
+# ---------------------------------------------------------------------------
+
+# Source repository URL. Override if using a fork.
+# export MSCREENSHOT_REPO_URL="https://github.com/cMardikas/mScreenshot.git"
+
+# Install base directory. Source is checked out into "${MSCREENSHOT_OPT_DIR}/src".
+# export MSCREENSHOT_OPT_DIR="/opt/mScreenshot"
+
+# System group for multi-user report access.
+# export MSCREENSHOT_GROUP="mscreenshot"
+
+# Set to 1 to install the sudoers fragment automatically (no prompt).
+# Requires NONINTERACTIVE=1 or explicit set here.
+# export MSCREENSHOT_INSTALL_SUDOERS=1
+
+# Targets for the scan wrapper script (run-scan.sh).
+# Space-separated list of IP addresses or CIDR ranges.
+# export MSCREENSHOT_TARGETS="10.1.0.0/24 10.2.0.0/24"
+
+# Description prefix for scan reports.
+# export MSCREENSHOT_DESC="engagement"
+
+# ---------------------------------------------------------------------------
+# Notes
+# ---------------------------------------------------------------------------
+# The above environment variable overrides are read directly by the module
+# scripts where implemented. Variables marked with '#' (commented out) are
+# reserved for future use or require module code additions to take effect.
+#
+# For most deployments the CLI flags (--dry-run, --noninteractive) are
+# sufficient and no config file is needed.
