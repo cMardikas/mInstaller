@@ -7,56 +7,55 @@ Installer for deploying supported tools on Kali Linux.
 ```bash
 git clone https://github.com/cMardikas/mInstaller.git
 cd mInstaller
-chmod +x install.sh
+chmod +x mInstaller.sh
 ```
 
 ## Run it
 
-When run from its git checkout, `mInstaller` automatically checks its own repository, fast-forwards from `origin/main` if needed, and then continues..
-
+When run from its git checkout, `mInstaller` automatically checks its own repository, fast-forwards from `origin/main` if needed, and then continues.
 
 Interactive menu:
 
 ```bash
-sudo ./install.sh
+sudo ./mInstaller.sh
 ```
 
 Install everything:
 
 ```bash
-sudo ./install.sh all
+sudo ./mInstaller.sh all
 ```
 
 Install a specific module:
 
 ```bash
-sudo ./install.sh mcollector
-sudo ./install.sh mscreenshot
+sudo ./mInstaller.sh mcollector
+sudo ./mInstaller.sh mscreenshot
 ```
 
 Preview only:
 
 ```bash
-sudo ./install.sh --dry-run
-sudo ./install.sh --dry-run all
+sudo ./mInstaller.sh --dry-run
+sudo ./mInstaller.sh --dry-run all
 ```
 
 Noninteractive:
 
 ```bash
-sudo ./install.sh --noninteractive
-sudo ./install.sh --noninteractive mcollector
-sudo ./install.sh --noninteractive mscreenshot
+sudo ./mInstaller.sh --noninteractive
+sudo ./mInstaller.sh --noninteractive mcollector
+sudo ./mInstaller.sh --noninteractive mscreenshot
 ```
 
 List available modules:
 
 ```bash
-./install.sh --list
+./mInstaller.sh --list
 ```
 
 Show help:
 
 ```bash
-./install.sh --help
+./mInstaller.sh --help
 ```

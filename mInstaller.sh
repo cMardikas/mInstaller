@@ -4,9 +4,9 @@
 # =============================================================================
 #
 # Usage:
-#   sudo ./install.sh [OPTIONS] <module> [<module> ...]
-#   sudo ./install.sh [OPTIONS] all
-#   sudo ./install.sh          (no args → interactive numbered menu)
+#   sudo ./mInstaller.sh [OPTIONS] <module> [<module> ...]
+#   sudo ./mInstaller.sh [OPTIONS] all
+#   sudo ./mInstaller.sh          (no args → interactive numbered menu)
 #
 # Options:
 #   -h, --help            Show this help message
@@ -18,13 +18,13 @@
 #   -V, --version         Print mInstaller version
 #
 # Examples:
-#   sudo ./install.sh                          # interactive menu
-#   sudo ./install.sh all
-#   sudo ./install.sh mcollector
-#   sudo ./install.sh mscreenshot
-#   sudo ./install.sh --dry-run all
-#   sudo ./install.sh --noninteractive mcollector mscreenshot
-#   sudo ./install.sh --noninteractive         # defaults to 'all'
+#   sudo ./mInstaller.sh                          # interactive menu
+#   sudo ./mInstaller.sh all
+#   sudo ./mInstaller.sh mcollector
+#   sudo ./mInstaller.sh mscreenshot
+#   sudo ./mInstaller.sh --dry-run all
+#   sudo ./mInstaller.sh --noninteractive mcollector mscreenshot
+#   sudo ./mInstaller.sh --noninteractive         # defaults to 'all'
 #
 # =============================================================================
 set -euo pipefail
@@ -94,22 +94,22 @@ $(registry_list_modules)
 
 Examples:
   # Launch interactive menu (no arguments)
-  sudo ./install.sh
+  sudo ./mInstaller.sh
 
   # Install everything
-  sudo ./install.sh all
+  sudo ./mInstaller.sh all
 
   # Install only mCollector
-  sudo ./install.sh mcollector
+  sudo ./mInstaller.sh mcollector
 
   # Dry-run both modules
-  sudo ./install.sh --dry-run all
+  sudo ./mInstaller.sh --dry-run all
 
   # Automated (no prompts) install of mScreenshot
-  sudo ./install.sh --noninteractive mscreenshot
+  sudo ./mInstaller.sh --noninteractive mscreenshot
 
   # Automated install — no module given, defaults to 'all'
-  sudo ./install.sh --noninteractive
+  sudo ./mInstaller.sh --noninteractive
 
 EOF
 }
@@ -500,7 +500,7 @@ main() {
 
 # Guard against sourcing this script accidentally
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
-    log_warn "install.sh is being sourced rather than executed. This is unusual."
+    log_warn "mInstaller.sh is being sourced rather than executed. This is unusual."
 else
     main "$@"
 fi
