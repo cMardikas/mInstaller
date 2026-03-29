@@ -180,7 +180,6 @@ module_mcollector_install() {
 
     # --- 8. Manual run guidance -----------------------------------------------
     log_ok "mCollector installation complete."
-    log_warn "No service was installed, enabled, or started."
     log_warn "Resolve any conflicting services (see preflight output) then run manually if needed:"
     log_warn "  cd ${_MC_OPT_DIR}"
     log_warn "  sudo ${_MC_BINARY}"

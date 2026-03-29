@@ -161,7 +161,6 @@ module_mscreenshot_install() {
 
     # --- 8. Manual run guidance -----------------------------------------------
     log_ok "mScreenshot installation complete."
-    log_warn "No service, timer, group, or system user was created."
     log_warn "The required scripts/ directory and nmap-bootstrap.xsl were copied out of src."
     log_warn "To run a scan manually:"
     log_warn "  cd /opt/mScreenshot/reports"
