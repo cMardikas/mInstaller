@@ -46,6 +46,7 @@ MINSTALLER_VERSION="1.0.0"
 export DRY_RUN=0
 export NONINTERACTIVE=0
 export MINSTALLER_LOG_LEVEL=2   # INFO
+export MINSTALLER_BANNER_PRINTED=0
 
 # ---------------------------------------------------------------------------
 # Source core libraries (order matters)
@@ -267,6 +268,11 @@ show_menu() {
     local -a _menu_ids=()       # ordered IDs for menu lookup
     local -i _idx=1
     local _id _name_var _desc_var
+
+    if [[ "${MINSTALLER_BANNER_PRINTED:-0}" -eq 0 ]]; then
+        print_banner
+        export MINSTALLER_BANNER_PRINTED=1
+    fi
 
     printf '\n'
     printf '  Select module(s) to install:\n'
@@ -521,7 +527,10 @@ main() {
     self_update_if_needed "$@"
     parse_args "$@"
 
-    print_banner
+    if [[ "${MINSTALLER_BANNER_PRINTED:-0}" -eq 0 ]]; then
+        print_banner
+        export MINSTALLER_BANNER_PRINTED=1
+    fi
 
     # Root check (outside dry-run — even dry-run should warn if not root)
     if [[ "${EUID}" -ne 0 ]]; then
