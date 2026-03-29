@@ -32,7 +32,7 @@ MODULE_mcollector_FILE="modules/mcollector.sh"
 
 # mscreenshot
 MODULE_mscreenshot_NAME="mScreenshot"
-MODULE_mscreenshot_DESC="Full-port nmap scanner with headless Chromium screenshots and Bootstrap HTML reports"
+MODULE_mscreenshot_DESC="Full-port nmap scanner with headless Chromium screenshots and HTML output"
 MODULE_mscreenshot_FILE="modules/mscreenshot.sh"
 
 # ---------------------------------------------------------------------------
