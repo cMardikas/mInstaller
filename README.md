@@ -12,7 +12,7 @@ chmod +x install.sh
 
 ## Run it
 
-When run from its git checkout, `mInstaller` automatically checks its own repository, fast-forwards from `origin/main` if needed, and then continues.
+When run from its git checkout, `mInstaller` automatically checks its own repository, fast-forwards from `origin/main` if needed, and then continues..
 
 
 Interactive menu:
