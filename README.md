@@ -10,6 +10,7 @@ cd mInstaller
 chmod +x mInstaller.sh
 ```
 
+
 ## Run it
 
 When run from its git checkout, `mInstaller` checks whether a newer version is available. To update it explicitly, run `sudo ./mInstaller.sh --self-update`.
