@@ -46,6 +46,7 @@ MINSTALLER_VERSION="1.0.0"
 export DRY_RUN=0
 export NONINTERACTIVE=0
 export MINSTALLER_LOG_LEVEL=2   # INFO
+export MINSTALLER_SELF_UPDATED="${MINSTALLER_SELF_UPDATED:-0}"
 
 # ---------------------------------------------------------------------------
 # Source core libraries (order matters)
@@ -84,6 +85,10 @@ Options:
   -v, --verbose         Enable debug-level logging
   -V, --version         Print version and exit
 
+Behavior:
+  - When run from a git checkout, mInstaller tries to fast-forward itself from
+    origin before processing modules, then restarts once with the same args.
+
 Modules:
 $(registry_list_modules)
 
@@ -107,6 +112,73 @@ Examples:
   sudo ./install.sh --noninteractive
 
 EOF
+}
+
+# ---------------------------------------------------------------------------
+# self_update_if_needed — when run from a git checkout, fast-forward from
+# origin and restart once with the same arguments if the local checkout changed.
+# Skips on dry-run, when already restarted once, or when not in a git repo.
+# ---------------------------------------------------------------------------
+self_update_if_needed() {
+    if [[ "${MINSTALLER_SELF_UPDATED:-0}" -eq 1 ]]; then
+        log_debug "Self-update already attempted in this process; skipping."
+        return 0
+    fi
+
+    if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+        log_debug "Dry-run mode: skipping self-update."
+        return 0
+    fi
+
+    if ! command -v git &>/dev/null; then
+        log_debug "git not found; skipping self-update."
+        return 0
+    fi
+
+    if ! git -C "${MINSTALLER_ROOT}" rev-parse --is-inside-work-tree &>/dev/null; then
+        log_debug "Not running from a git checkout; skipping self-update."
+        return 0
+    fi
+
+    if [[ -n "$(git -C "${MINSTALLER_ROOT}" status --porcelain 2>/dev/null)" ]]; then
+        log_warn "Local changes detected in mInstaller; skipping automatic self-update."
+        return 0
+    fi
+
+    if ! git -C "${MINSTALLER_ROOT}" remote get-url origin &>/dev/null; then
+        log_debug "No git remote named origin; skipping self-update."
+        return 0
+    fi
+
+    local current_head upstream_head
+    current_head="$(git -C "${MINSTALLER_ROOT}" rev-parse HEAD 2>/dev/null || true)"
+
+    log_info "Checking mInstaller for updates..."
+    if ! git -C "${MINSTALLER_ROOT}" fetch --quiet origin; then
+        log_warn "Failed to fetch mInstaller updates from origin; continuing with current version."
+        return 0
+    fi
+
+    if git -C "${MINSTALLER_ROOT}" rev-parse --verify origin/main &>/dev/null; then
+        upstream_head="$(git -C "${MINSTALLER_ROOT}" rev-parse origin/main)"
+    else
+        log_debug "origin/main not found; skipping self-update."
+        return 0
+    fi
+
+    if [[ -z "${current_head}" || "${current_head}" == "${upstream_head}" ]]; then
+        log_debug "mInstaller already up to date."
+        return 0
+    fi
+
+    log_info "Updating mInstaller from origin/main and restarting..."
+    if ! git -C "${MINSTALLER_ROOT}" pull --ff-only --quiet origin main; then
+        log_warn "Automatic self-update failed; continuing with current version."
+        return 0
+    fi
+
+    export MINSTALLER_SELF_UPDATED=1
+    exec "${BASH_SOURCE[0]}" "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -377,6 +449,7 @@ EOF
 # main
 # ---------------------------------------------------------------------------
 main() {
+    self_update_if_needed "$@"
     parse_args "$@"
 
     print_banner
