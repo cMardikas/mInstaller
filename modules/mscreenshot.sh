@@ -95,11 +95,11 @@ module_mscreenshot_install() {
     # --- 3. Build -------------------------------------------------------------
     log_step "mScreenshot — Building"
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-        log_dryrun "[build] cd '${_MS_SRC_DIR}' && make"
+        log_dryrun "[build] copy '${_MS_SRC_DIR}' to a temporary workspace and run 'make' as an unprivileged user"
+        log_dryrun "[build] copy built artifact 'mScreenshot' to '${_MS_BINARY}'"
     else
-        log_info "Running make in ${_MS_SRC_DIR}"
-        ( cd "${_MS_SRC_DIR}" && make ) \
-            || die "mScreenshot build failed"
+        run_make_unprivileged "mscreenshot" "${_MS_SRC_DIR}" "mScreenshot" "${_MS_BINARY}" 0
+        chmod 0755 "${_MS_BINARY}"
         log_ok "Build complete"
     fi
 
@@ -108,9 +108,9 @@ module_mscreenshot_install() {
 
     if [[ "${DRY_RUN:-0}" -eq 0 ]]; then
         mkdir -p "${_MS_OPT_DIR}"
-        [[ -f "${_MS_SRC_DIR}/mScreenshot" ]] && cp "${_MS_SRC_DIR}/mScreenshot" "${_MS_BINARY}"
         chmod 0755 "${_MS_OPT_DIR}"
-        [[ -f "${_MS_BINARY}" ]] && chmod 0755 "${_MS_BINARY}"
+        [[ -f "${_MS_BINARY}" ]] \
+            || die "Built mScreenshot binary not found at '${_MS_BINARY}'"
         if [[ -d "${_MS_SRC_DIR}/scripts" ]]; then
             rm -rf "${_MS_RUNTIME_SCRIPTS_DIR}"
             cp -R "${_MS_SRC_DIR}/scripts" "${_MS_RUNTIME_SCRIPTS_DIR}"
@@ -123,7 +123,7 @@ module_mscreenshot_install() {
         }
     else
         log_dryrun "[system] mkdir -p '${_MS_OPT_DIR}'"
-        log_dryrun "[install] cp '${_MS_SRC_DIR}/mScreenshot' '${_MS_BINARY}'"
+        log_dryrun "[install] cp built artifact to '${_MS_BINARY}'"
         log_dryrun "[install] cp -R '${_MS_SRC_DIR}/scripts' '${_MS_RUNTIME_SCRIPTS_DIR}'"
         log_dryrun "[install] cp '${_MS_SRC_DIR}/nmap-bootstrap.xsl' '${_MS_XSLT}'"
         log_dryrun "[system] chmod 0755 '${_MS_OPT_DIR}' '${_MS_BINARY}'"

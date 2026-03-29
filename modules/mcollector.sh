@@ -115,11 +115,11 @@ module_mcollector_install() {
     # --- 3. Build -------------------------------------------------------------
     log_step "mCollector — Building"
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-        log_dryrun "[build] cd '${_MC_SRC_DIR}' && make clean && make"
+        log_dryrun "[build] copy '${_MC_SRC_DIR}' to a temporary workspace and run 'make clean && make' as an unprivileged user"
+        log_dryrun "[build] copy built artifact 'mCollector' to '${_MC_BINARY}'"
     else
-        log_info "Running make in ${_MC_SRC_DIR}"
-        ( cd "${_MC_SRC_DIR}" && make clean && make ) \
-            || die "mCollector build failed"
+        run_make_unprivileged "mcollector" "${_MC_SRC_DIR}" "mCollector" "${_MC_BINARY}" 1
+        chmod 755 "${_MC_BINARY}"
         log_ok "Build complete"
     fi
 
@@ -134,9 +134,8 @@ module_mcollector_install() {
         log_dryrun "[install] cp '${_MC_SRC_DIR}/index.html' '${_MC_INDEX_HTML}'"
         log_dryrun "[install] cp '${_MC_SRC_DIR}/mCollector.ps1' '${_MC_PS1}'"
     else
-        cp "${_MC_SRC_DIR}/mCollector" "${_MC_BINARY}" \
-            || die "Failed to copy mCollector binary"
-        chmod 755 "${_MC_BINARY}"
+        [[ -f "${_MC_BINARY}" ]] \
+            || die "Built mCollector binary not found at '${_MC_BINARY}'"
 
         [[ -f "${_MC_SRC_DIR}/index.html" ]] \
             && cp "${_MC_SRC_DIR}/index.html" "${_MC_INDEX_HTML}"

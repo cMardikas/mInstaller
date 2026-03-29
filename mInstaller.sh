@@ -46,7 +46,6 @@ MINSTALLER_VERSION="1.0.0"
 export DRY_RUN=0
 export NONINTERACTIVE=0
 export MINSTALLER_LOG_LEVEL=2   # INFO
-export MINSTALLER_SELF_UPDATED="${MINSTALLER_SELF_UPDATED:-0}"
 
 # ---------------------------------------------------------------------------
 # Source core libraries (order matters)
@@ -82,12 +81,13 @@ Options:
   -n, --dry-run         Simulate install; print what would be done (no changes)
   -y, --noninteractive  Assume 'yes' to all prompts; selects 'all' when no
                         module is specified (suitable for automation/CI)
+  -U, --self-update     Update mInstaller itself from origin/main and exit
   -v, --verbose         Enable debug-level logging
   -V, --version         Print version and exit
 
 Behavior:
-  - When run from a git checkout, mInstaller tries to fast-forward itself from
-    origin before processing modules, then restarts once with the same args.
+  - When run from a git checkout, mInstaller checks whether updates are
+    available. Use --self-update to apply them explicitly.
 
 Modules:
 $(registry_list_modules)
@@ -111,74 +111,142 @@ Examples:
   # Automated install — no module given, defaults to 'all'
   sudo ./mInstaller.sh --noninteractive
 
+  # Update mInstaller itself, then re-run your install command manually
+  sudo ./mInstaller.sh --self-update
+
 EOF
 }
 
 # ---------------------------------------------------------------------------
-# self_update_if_needed — when run from a git checkout, fast-forward from
-# origin and restart once with the same arguments if the local checkout changed.
-# Skips on dry-run, when already restarted once, or when not in a git repo.
+# self_update_if_needed — checks for updates from origin/main. By default this
+# only notifies. With --self-update it fast-forwards and exits so the operator
+# can re-run explicitly. This avoids auto-executing freshly pulled code as root.
 # ---------------------------------------------------------------------------
 self_update_if_needed() {
-    if [[ "${MINSTALLER_SELF_UPDATED:-0}" -eq 1 ]]; then
-        log_debug "Self-update already attempted in this process; skipping."
-        return 0
-    fi
-
-    if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-        log_debug "Dry-run mode: skipping self-update."
-        return 0
-    fi
+    local do_update=0
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in
+            -U|--self-update) do_update=1 ;;
+            -n|--dry-run) return 0 ;;
+        esac
+    done
 
     if ! command -v git &>/dev/null; then
-        log_debug "git not found; skipping self-update."
+        log_debug "git not found; skipping self-update check."
         return 0
     fi
 
     if ! git -C "${MINSTALLER_ROOT}" rev-parse --is-inside-work-tree &>/dev/null; then
-        log_debug "Not running from a git checkout; skipping self-update."
-        return 0
-    fi
-
-    if [[ -n "$(git -C "${MINSTALLER_ROOT}" status --porcelain 2>/dev/null)" ]]; then
-        log_warn "Local changes detected in mInstaller; skipping automatic self-update."
+        log_debug "Not running from a git checkout; skipping self-update check."
         return 0
     fi
 
     if ! git -C "${MINSTALLER_ROOT}" remote get-url origin &>/dev/null; then
-        log_debug "No git remote named origin; skipping self-update."
+        log_debug "No git remote named origin; skipping self-update check."
         return 0
     fi
 
     local current_head upstream_head
     current_head="$(git -C "${MINSTALLER_ROOT}" rev-parse HEAD 2>/dev/null || true)"
 
-    log_info "Checking mInstaller for updates..."
     if ! git -C "${MINSTALLER_ROOT}" fetch --quiet origin; then
         log_warn "Failed to fetch mInstaller updates from origin; continuing with current version."
         return 0
     fi
 
-    if git -C "${MINSTALLER_ROOT}" rev-parse --verify origin/main &>/dev/null; then
-        upstream_head="$(git -C "${MINSTALLER_ROOT}" rev-parse origin/main)"
-    else
-        log_debug "origin/main not found; skipping self-update."
+    if ! git -C "${MINSTALLER_ROOT}" rev-parse --verify origin/main &>/dev/null; then
+        log_debug "origin/main not found; skipping self-update check."
         return 0
     fi
+    upstream_head="$(git -C "${MINSTALLER_ROOT}" rev-parse origin/main)"
 
     if [[ -z "${current_head}" || "${current_head}" == "${upstream_head}" ]]; then
+        if [[ "${do_update}" -eq 1 ]]; then
+            log_ok "mInstaller is already up to date."
+            exit 0
+        fi
         log_debug "mInstaller already up to date."
         return 0
     fi
 
-    log_info "Updating mInstaller from origin/main and restarting..."
-    if ! git -C "${MINSTALLER_ROOT}" pull --ff-only --quiet origin main; then
-        log_warn "Automatic self-update failed; continuing with current version."
+    if [[ -n "$(git -C "${MINSTALLER_ROOT}" status --porcelain 2>/dev/null)" ]]; then
+        log_warn "Local changes detected in mInstaller; skipping self-update."
         return 0
     fi
 
-    export MINSTALLER_SELF_UPDATED=1
-    exec "${BASH_SOURCE[0]}" "$@"
+    if [[ "${do_update}" -eq 1 ]]; then
+        log_info "Updating mInstaller from origin/main..."
+        if ! git -C "${MINSTALLER_ROOT}" pull --ff-only --quiet origin main; then
+            die "mInstaller self-update failed. Resolve git issues and retry."
+        fi
+        log_ok "mInstaller updated successfully. Re-run your command with the updated version."
+        exit 0
+    fi
+
+    log_warn "A newer mInstaller version is available. Run './mInstaller.sh --self-update' before proceeding if you want the latest version."
+}
+
+# ---------------------------------------------------------------------------
+# resolve_build_user — choose an unprivileged account for compiling third-party
+# code. Prefers the invoking sudo user, otherwise falls back to nobody.
+# ---------------------------------------------------------------------------
+resolve_build_user() {
+    if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+        printf '%s' "${SUDO_USER}"
+        return 0
+    fi
+
+    if id nobody &>/dev/null; then
+        printf '%s' "nobody"
+        return 0
+    fi
+
+    die "Unable to determine an unprivileged build user. Run mInstaller via sudo from a normal user account."
+}
+
+# ---------------------------------------------------------------------------
+# run_make_unprivileged <module_name> <source_dir> <artifact_relpath> <dest>
+#                      <clean_first:0|1>
+# Copies the source tree to a temporary build workspace, compiles as a non-root
+# user, then copies just the requested artifact back to the destination.
+# ---------------------------------------------------------------------------
+run_make_unprivileged() {
+    local module_name="${1:?run_make_unprivileged: missing module name}"
+    local source_dir="${2:?run_make_unprivileged: missing source dir}"
+    local artifact_relpath="${3:?run_make_unprivileged: missing artifact path}"
+    local dest_path="${4:?run_make_unprivileged: missing destination path}"
+    local clean_first="${5:-0}"
+
+    local build_user build_group build_dir build_cmd
+    build_user="$(resolve_build_user)"
+    build_group="$(id -gn "${build_user}")"
+    build_dir="$(mktemp -d "/tmp/minstaller-${module_name}-XXXXXX")"
+
+    log_info "Building ${module_name} as unprivileged user '${build_user}' in a temporary workspace."
+    cp -a "${source_dir}/." "${build_dir}/"
+    chown -R "${build_user}:${build_group}" "${build_dir}"
+
+    if [[ "${clean_first}" -eq 1 ]]; then
+        build_cmd='set -euo pipefail; cd "$1"; make clean && make'
+    else
+        build_cmd='set -euo pipefail; cd "$1"; make'
+    fi
+
+    if command -v runuser &>/dev/null; then
+        runuser -u "${build_user}" -- bash -lc "${build_cmd}" bash "${build_dir}" \
+            || die "${module_name} build failed"
+    elif command -v sudo &>/dev/null; then
+        sudo -u "${build_user}" HOME="${build_dir}" bash -lc "${build_cmd}" bash "${build_dir}" \
+            || die "${module_name} build failed"
+    else
+        rm -rf "${build_dir}"
+        die "Neither runuser nor sudo is available for unprivileged builds."
+    fi
+
+    cp "${build_dir}/${artifact_relpath}" "${dest_path}" \
+        || { rm -rf "${build_dir}"; die "Failed to copy built artifact for ${module_name}"; }
+    rm -rf "${build_dir}"
 }
 
 # ---------------------------------------------------------------------------
@@ -340,6 +408,8 @@ parse_args() {
             -y|--noninteractive)
                 NONINTERACTIVE=1
                 export NONINTERACTIVE
+                ;;
+            -U|--self-update)
                 ;;
             -v|--verbose)
                 MINSTALLER_LOG_LEVEL="${LOG_LEVEL_DEBUG}"

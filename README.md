@@ -12,7 +12,7 @@ chmod +x mInstaller.sh
 
 ## Run it
 
-When run from its git checkout, `mInstaller` automatically checks its own repository, fast-forwards from `origin/main` if needed, and then continues.
+When run from its git checkout, `mInstaller` checks whether a newer version is available. To update it explicitly, run `sudo ./mInstaller.sh --self-update`.
 
 Interactive menu:
 
@@ -52,6 +52,12 @@ List available modules:
 
 ```bash
 ./mInstaller.sh --list
+```
+
+Self-update:
+
+```bash
+sudo ./mInstaller.sh --self-update
 ```
 
 Show help:
