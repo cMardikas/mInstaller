@@ -48,7 +48,6 @@ mInstaller/
 │   ├── registry.sh         # Module manifest + source/validate helpers
 │   ├── mcollector.sh       # mCollector installer module
 │   └── mscreenshot.sh      # mScreenshot installer module
-├── minstaller.conf.sample  # Annotated sample configuration file
 └── README.md               # This file
 ```
 
@@ -77,7 +76,27 @@ The registry (`modules/registry.sh`) maps module IDs to files and human-readable
 ```
 sudo ./install.sh [OPTIONS] <module> [<module> ...]
 sudo ./install.sh [OPTIONS] all
+sudo ./install.sh          # no args → interactive numbered menu
 ```
+
+### Interactive Menu
+
+Running `./install.sh` with no module arguments launches a numbered selection menu:
+
+```
+  Select module(s) to install:
+
+   1) mCollector         NTLMv2 hash capture via rogue SMB2/mDNS/HTTPS server ...
+   2) mScreenshot        Full-port nmap scanner with headless Chromium screenshots ...
+   3) all                Install all modules
+   4) quit               Exit without installing
+
+  Enter number(s) [1-4]:
+```
+
+You can enter a single number (`2`) or multiple numbers separated by spaces or commas (`1 2` or `1,2`). Selecting **all** installs every registered module; **quit** exits cleanly.
+
+The menu is built dynamically from the module registry, so newly added modules appear automatically.
 
 ### Options
 
@@ -86,13 +105,16 @@ sudo ./install.sh [OPTIONS] all
 | `-h`, `--help` | Show help |
 | `-l`, `--list` | List registered modules |
 | `-n`, `--dry-run` | Preview all actions without making changes |
-| `-y`, `--noninteractive` | Assume yes to all prompts (for automation/CI) |
+| `-y`, `--noninteractive` | Assume yes to all prompts; defaults to `all` when no module is specified |
 | `-v`, `--verbose` | Enable debug logging |
 | `-V`, `--version` | Print version |
 
 ### Examples
 
 ```bash
+# Launch interactive menu (no arguments)
+sudo ./install.sh
+
 # Install all registered modules
 sudo ./install.sh all
 
@@ -110,6 +132,9 @@ sudo ./install.sh --dry-run all
 
 # Fully automated (no prompts), verbose
 sudo ./install.sh --noninteractive --verbose all
+
+# Automated — no module given, defaults to 'all'
+sudo ./install.sh --noninteractive
 
 # List available modules
 ./install.sh --list
@@ -260,8 +285,15 @@ Activate with `--dry-run` or `-n`. In dry-run mode:
 Activate with `--noninteractive` or `-y`. In this mode:
 
 - All yes/no prompts are answered "yes" automatically.
+- **If no module is specified**, installation defaults to `all` — the interactive menu is suppressed entirely.
 - Suitable for automated deployment pipelines, provisioning scripts, or Ansible tasks.
 - The user addition to `mscreenshot` group and the sudoers installation proceed automatically.
+
+```bash
+# These are equivalent in noninteractive mode:
+sudo ./install.sh --noninteractive
+sudo ./install.sh --noninteractive all
+```
 
 ---
 

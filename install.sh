@@ -6,21 +6,25 @@
 # Usage:
 #   sudo ./install.sh [OPTIONS] <module> [<module> ...]
 #   sudo ./install.sh [OPTIONS] all
+#   sudo ./install.sh          (no args → interactive numbered menu)
 #
 # Options:
 #   -h, --help            Show this help message
 #   -l, --list            List available modules
 #   -n, --dry-run         Print what would be done without making changes
-#   -y, --noninteractive  Assume yes to all interactive prompts
+#   -y, --noninteractive  Assume yes to all interactive prompts; selects 'all'
+#                         when no module argument is given
 #   -v, --verbose         Enable debug logging
 #   -V, --version         Print mInstaller version
 #
 # Examples:
+#   sudo ./install.sh                          # interactive menu
 #   sudo ./install.sh all
 #   sudo ./install.sh mcollector
 #   sudo ./install.sh mscreenshot
 #   sudo ./install.sh --dry-run all
 #   sudo ./install.sh --noninteractive mcollector mscreenshot
+#   sudo ./install.sh --noninteractive         # defaults to 'all'
 #
 # =============================================================================
 set -euo pipefail
@@ -69,12 +73,14 @@ mInstaller v${MINSTALLER_VERSION} — Modular Kali Linux Installer
 Usage:
   sudo $(basename "${BASH_SOURCE[0]}") [OPTIONS] <module> [<module> ...]
   sudo $(basename "${BASH_SOURCE[0]}") [OPTIONS] all
+  sudo $(basename "${BASH_SOURCE[0]}")           (no args → interactive numbered menu)
 
 Options:
   -h, --help            Show this help message
   -l, --list            List available modules with descriptions
   -n, --dry-run         Simulate install; print what would be done (no changes)
-  -y, --noninteractive  Assume 'yes' to all prompts (suitable for automation)
+  -y, --noninteractive  Assume 'yes' to all prompts; selects 'all' when no
+                        module is specified (suitable for automation/CI)
   -v, --verbose         Enable debug-level logging
   -V, --version         Print version and exit
 
@@ -82,6 +88,9 @@ Modules:
 $(registry_list_modules)
 
 Examples:
+  # Launch interactive menu (no arguments)
+  sudo ./install.sh
+
   # Install everything
   sudo ./install.sh all
 
@@ -94,7 +103,120 @@ Examples:
   # Automated (no prompts) install of mScreenshot
   sudo ./install.sh --noninteractive mscreenshot
 
+  # Automated install — no module given, defaults to 'all'
+  sudo ./install.sh --noninteractive
+
 EOF
+}
+
+# ---------------------------------------------------------------------------
+# show_menu — display a numbered module selection menu and populate
+#             SELECTED_MODULES from the user's response.
+#
+# Menu items are built dynamically from MINSTALLER_MODULES so that adding
+# a new module to the registry automatically appears in the menu.
+# The last two fixed entries are always "all" and "quit".
+#
+# The user may enter:
+#   - a single number          (e.g.  2)
+#   - multiple numbers, space- or comma-separated  (e.g.  1 2  or  1,2)
+# Selecting the "quit" entry exits with code 0.
+# An invalid selection re-prompts.
+# ---------------------------------------------------------------------------
+show_menu() {
+    local -a _menu_ids=()       # ordered IDs for menu lookup
+    local -i _idx=1
+    local _id _name_var _desc_var
+
+    printf '\n'
+    printf '  Select module(s) to install:\n'
+    printf '\n'
+
+    # Dynamic module entries
+    for _id in "${MINSTALLER_MODULES[@]}"; do
+        _name_var="MODULE_${_id}_NAME"
+        _desc_var="MODULE_${_id}_DESC"
+        printf '  %2d) %-16s  %s\n' \
+            "${_idx}" \
+            "${!_name_var:-${_id}}" \
+            "${!_desc_var:-}"
+        _menu_ids+=("${_id}")
+        _idx=$(( _idx + 1 ))
+    done
+
+    # Fixed entries: all, quit
+    local _all_idx=${_idx}
+    printf '  %2d) %-16s  %s\n' "${_all_idx}" "all" "Install all modules"
+    _idx=$(( _idx + 1 ))
+    local _quit_idx=${_idx}
+    printf '  %2d) %-16s  %s\n' "${_quit_idx}" "quit" "Exit without installing"
+    printf '\n'
+
+    # Input loop
+    while true; do
+        printf '  Enter number(s) [1-%d]: ' "${_quit_idx}"
+        local _input
+        if ! read -r _input; then
+            # EOF (e.g. stdin closed)
+            printf '\n'
+            exit 0
+        fi
+
+        # Normalise: replace commas with spaces, squeeze whitespace
+        _input="${_input//,/ }"
+        local -a _tokens
+        read -ra _tokens <<< "${_input}"
+
+        if [[ "${#_tokens[@]}" -eq 0 ]]; then
+            printf '  No selection. Please enter one or more numbers.\n'
+            continue
+        fi
+
+        local _ok=1
+        local -a _chosen=()
+
+        for _tok in "${_tokens[@]}"; do
+            # Must be a positive integer
+            if ! [[ "${_tok}" =~ ^[0-9]+$ ]]; then
+                printf '  Invalid input: "%s" is not a number.\n' "${_tok}"
+                _ok=0
+                break
+            fi
+
+            local -i _n=${_tok}
+            if [[ "${_n}" -lt 1 || "${_n}" -gt "${_quit_idx}" ]]; then
+                printf '  Number out of range: %d (valid: 1-%d).\n' "${_n}" "${_quit_idx}"
+                _ok=0
+                break
+            fi
+
+            if [[ "${_n}" -eq "${_quit_idx}" ]]; then
+                printf '  Quitting.\n'
+                exit 0
+            fi
+
+            if [[ "${_n}" -eq "${_all_idx}" ]]; then
+                _chosen=("${MINSTALLER_MODULES[@]}")
+                break   # 'all' supersedes any other selection
+            fi
+
+            # _menu_ids is 0-indexed; menu is 1-indexed
+            _chosen+=("${_menu_ids[$(( _n - 1 ))]}")
+
+        done
+
+        if [[ "${_ok}" -eq 0 ]]; then
+            continue
+        fi
+
+        if [[ "${#_chosen[@]}" -eq 0 ]]; then
+            printf '  No valid modules selected. Try again.\n'
+            continue
+        fi
+
+        SELECTED_MODULES=("${_chosen[@]}")
+        break
+    done
 }
 
 # ---------------------------------------------------------------------------
@@ -103,9 +225,30 @@ EOF
 parse_args() {
     SELECTED_MODULES=()
 
+    # First pass: collect flags so we know NONINTERACTIVE before deciding
+    # whether to show the menu.  We do a full parse in the main loop below.
+    local _has_module_arg=0
+    local _arg
+    for _arg in "$@"; do
+        case "${_arg}" in
+            -h|--help|-l|--list|-V|--version) ;;
+            -n|--dry-run|-v|--verbose)        ;;
+            -y|--noninteractive) NONINTERACTIVE=1; export NONINTERACTIVE ;;
+            --) break ;;
+            *) _has_module_arg=1 ;;
+        esac
+    done
+
+    # If invoked with zero arguments and NOT --noninteractive, show the menu
+    # immediately (before re-parsing flags, which is a no-op for zero args).
     if [[ "$#" -eq 0 ]]; then
-        usage
-        exit 0
+        if [[ "${NONINTERACTIVE:-0}" -eq 1 ]]; then
+            # Noninteractive + no modules → default to all
+            SELECTED_MODULES=("${MINSTALLER_MODULES[@]}")
+            return 0
+        fi
+        show_menu
+        return 0
     fi
 
     while [[ "$#" -gt 0 ]]; do
@@ -156,10 +299,17 @@ parse_args() {
         shift
     done
 
+    # After full flag parse: if only flags were supplied and no module was
+    # named, decide based on noninteractive mode.
     if [[ "${#SELECTED_MODULES[@]}" -eq 0 ]]; then
-        log_error "No modules selected."
-        usage
-        exit 1
+        if [[ "${NONINTERACTIVE:-0}" -eq 1 ]]; then
+            # --noninteractive with no modules → default to all
+            log_info "No modules specified; --noninteractive is set — defaulting to 'all'."
+            SELECTED_MODULES=("${MINSTALLER_MODULES[@]}")
+        else
+            # Flags only, no modules, interactive — show the menu
+            show_menu
+        fi
     fi
 
     # Deduplicate preserving order
