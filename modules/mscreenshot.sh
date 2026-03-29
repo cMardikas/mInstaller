@@ -141,7 +141,4 @@ module_mscreenshot_install() {
     log_warn "The full scripts/ directory tree and nmap-bootstrap.xsl were copied out of src."
     log_warn "To run a scan manually from your chosen working directory:"
     log_warn "  sudo /opt/mScreenshot/mScreenshot -d '<description>' <target>"
-    log_warn "If chromium/screenshot.py still fails, check /dev/shm size and AppArmor:"
-    log_warn "  mount | grep shm"
-    log_warn "  aa-status | grep chromium"
 }
