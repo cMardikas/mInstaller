@@ -34,6 +34,7 @@ _MC_TLS_CERT="${_MC_OPT_DIR}/cert.pem"
 _MC_TLS_KEY="${_MC_OPT_DIR}/key.pem"
 _MC_INDEX_HTML="${_MC_OPT_DIR}/index.html"
 _MC_PS1="${_MC_OPT_DIR}/mCollector.ps1"
+_MC_KOONDRAPORT="${_MC_OPT_DIR}/koondraport.py"
 _MC_UPLOADS_DIR="${_MC_OPT_DIR}/uploads"
 _MC_BINARY="${_MC_OPT_DIR}/mCollector"
 _MC_HASHES_FILE="${_MC_UPLOADS_DIR}/hashes.txt"
@@ -133,6 +134,7 @@ module_mcollector_install() {
         log_dryrun "[build] install built mCollector binary at '${_MC_BINARY}' with mode 750"
         log_dryrun "[install] cp '${_MC_SRC_DIR}/index.html' '${_MC_INDEX_HTML}'"
         log_dryrun "[install] cp '${_MC_SRC_DIR}/mCollector.ps1' '${_MC_PS1}'"
+        log_dryrun "[install] cp '${_MC_SRC_DIR}/koondraport.py' '${_MC_KOONDRAPORT}'"
     else
         [[ -f "${_MC_BINARY}" ]] \
             || die "Built mCollector binary not found at '${_MC_BINARY}'"
@@ -142,6 +144,8 @@ module_mcollector_install() {
             && cp "${_MC_SRC_DIR}/index.html" "${_MC_INDEX_HTML}"
         [[ -f "${_MC_SRC_DIR}/mCollector.ps1" ]] \
             && cp "${_MC_SRC_DIR}/mCollector.ps1" "${_MC_PS1}"
+        [[ -f "${_MC_SRC_DIR}/koondraport.py" ]] \
+            && cp "${_MC_SRC_DIR}/koondraport.py" "${_MC_KOONDRAPORT}"
         log_ok "Binary and runtime files installed"
     fi
 
