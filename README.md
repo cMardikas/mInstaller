@@ -66,3 +66,22 @@ Show help:
 ```bash
 ./mInstaller.sh --help
 ```
+
+## mCollector runtime layout
+
+After `mcollector` runs, `/opt/mCollector/` contains:
+
+- `mCollector` — the built binary (index.html and mCollector.ps1 are embedded at build time).
+- `koondraport.py` — operator-run fleet-report helper.
+- `cert.pem` / `key.pem` — optional, operator-supplied TLS material.
+- `uploads/` — captured data; never modified by the installer.
+- `public/` — operator-supplied static downloads. mCollector >= 1.5.0 serves
+  these at `/<filename>` (e.g. drop `PingCastle.exe` here and it is reachable
+  at `https://<host>/PingCastle.exe`). The directory is preserved across
+  upgrades.
+- `src/` — build checkout, used for rebuilds.
+
+On upgrade, the installer migrates legacy loose downloadable files (currently
+`PingCastle.exe`) from `/opt/mCollector/` into `public/` when the destination
+is empty. If both copies exist, the loose copy is left in place with a warning
+so the operator can resolve it manually.
