@@ -83,12 +83,16 @@ Options:
   -y, --noninteractive  Assume 'yes' to all prompts; selects 'all' when no
                         module is specified (suitable for automation/CI)
   -U, --self-update     Update mInstaller itself from origin/main and exit
+                        (without running any module)
+      --no-self-update  Skip the automatic self-update check for this run
   -v, --verbose         Enable debug-level logging
   -V, --version         Print version and exit
 
 Behavior:
-  - When run from a git checkout, mInstaller checks whether updates are
-    available. Use --self-update to apply them explicitly.
+  - When run from a git checkout, mInstaller automatically fast-forwards to
+    origin's default branch and re-executes itself with the original
+    arguments before installing. Use --no-self-update to opt out, or run
+    --self-update on its own to update without installing modules.
 
 Modules:
 $(registry_list_modules)
@@ -112,80 +116,175 @@ Examples:
   # Automated install — no module given, defaults to 'all'
   sudo ./mInstaller.sh --noninteractive
 
-  # Update mInstaller itself, then re-run your install command manually
+  # Update mInstaller itself without running any modules
   sudo ./mInstaller.sh --self-update
+
+  # Skip the automatic update check (e.g. offline / pinned environment)
+  sudo ./mInstaller.sh --no-self-update all
 
 EOF
 }
 
 # ---------------------------------------------------------------------------
-# self_update_if_needed — checks for updates from origin/main. By default this
-# only notifies. With --self-update it fast-forwards and exits so the operator
-# can re-run explicitly. This avoids auto-executing freshly pulled code as root.
+# self_update_if_needed — auto-updates mInstaller from the remote default
+# branch when running inside a git checkout, then re-execs the script with the
+# original arguments so the freshly pulled code takes over.
+#
+# Safety properties:
+#   - Skips when MINSTALLER_SKIP_SELF_UPDATE=1 (set by --no-self-update or by
+#     ourselves after a successful re-exec to prevent loops).
+#   - Skips dry-run so simulations don't mutate the working tree.
+#   - Refuses to update if the working tree has local modifications.
+#   - Only fast-forwards: never rewrites or discards local commits.
+#   - Outside a git checkout, warns and continues without altering files.
+#   - With --self-update, updates and exits without running modules.
 # ---------------------------------------------------------------------------
 self_update_if_needed() {
-    local do_update=0
+    local do_update_only=0
+    local skip_via_flag=0
+    local dry_run=0
     local arg
     for arg in "$@"; do
         case "${arg}" in
-            -U|--self-update) do_update=1 ;;
-            -n|--dry-run) return 0 ;;
+            -U|--self-update) do_update_only=1 ;;
+            --no-self-update) skip_via_flag=1 ;;
+            -n|--dry-run)     dry_run=1 ;;
         esac
     done
 
+    # Dry-run never mutates the working tree. Honour --self-update by
+    # reporting what would happen, but do not modify files.
+    if [[ "${dry_run}" -eq 1 ]]; then
+        if [[ "${do_update_only}" -eq 1 ]]; then
+            log_info "[dry-run] Would check for and apply mInstaller updates."
+            exit 0
+        fi
+        log_debug "Dry-run: skipping self-update check."
+        return 0
+    fi
+
+    if [[ "${skip_via_flag}" -eq 1 && "${do_update_only}" -eq 0 ]]; then
+        log_debug "--no-self-update specified; skipping self-update check."
+        return 0
+    fi
+
+    # Re-exec loop guard: if this process is the result of a self-update
+    # re-exec, do not check again.
+    if [[ "${MINSTALLER_SKIP_SELF_UPDATE:-0}" -eq 1 ]]; then
+        log_debug "MINSTALLER_SKIP_SELF_UPDATE is set; skipping self-update check."
+        if [[ "${do_update_only}" -eq 1 ]]; then
+            log_ok "mInstaller is already up to date."
+            exit 0
+        fi
+        return 0
+    fi
+
     if ! command -v git &>/dev/null; then
-        log_debug "git not found; skipping self-update check."
+        if [[ "${do_update_only}" -eq 1 ]]; then
+            die "git is required for --self-update but is not installed."
+        fi
+        log_warn "git not found; cannot auto-update mInstaller. Continuing with the installed copy."
         return 0
     fi
 
     if ! git -C "${MINSTALLER_ROOT}" rev-parse --is-inside-work-tree &>/dev/null; then
-        log_debug "Not running from a git checkout; skipping self-update check."
+        if [[ "${do_update_only}" -eq 1 ]]; then
+            die "mInstaller is not running from a git checkout; cannot --self-update. Re-clone from the upstream repository instead."
+        fi
+        log_warn "mInstaller is not running from a git checkout; auto-update is unavailable. Re-clone the repository to receive updates."
         return 0
     fi
 
     if ! git -C "${MINSTALLER_ROOT}" remote get-url origin &>/dev/null; then
-        log_debug "No git remote named origin; skipping self-update check."
+        if [[ "${do_update_only}" -eq 1 ]]; then
+            die "No git remote named 'origin' is configured; cannot --self-update."
+        fi
+        log_warn "No git remote named 'origin'; auto-update is unavailable."
         return 0
     fi
 
-    local current_head upstream_head
+    local current_head
     current_head="$(git -C "${MINSTALLER_ROOT}" rev-parse HEAD 2>/dev/null || true)"
 
     if ! git -C "${MINSTALLER_ROOT}" fetch --quiet origin; then
         log_warn "Failed to fetch mInstaller updates from origin; continuing with current version."
+        if [[ "${do_update_only}" -eq 1 ]]; then
+            exit 1
+        fi
         return 0
     fi
 
-    if ! git -C "${MINSTALLER_ROOT}" rev-parse --verify origin/main &>/dev/null; then
-        log_debug "origin/main not found; skipping self-update check."
+    # Resolve the remote's default branch. Fall back to 'main' if the symbolic
+    # ref is missing (e.g. older clones where 'origin/HEAD' was never set).
+    local remote_branch=""
+    if remote_branch="$(git -C "${MINSTALLER_ROOT}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"; then
+        :
+    elif git -C "${MINSTALLER_ROOT}" rev-parse --verify --quiet origin/main >/dev/null; then
+        remote_branch="origin/main"
+    elif git -C "${MINSTALLER_ROOT}" rev-parse --verify --quiet origin/master >/dev/null; then
+        remote_branch="origin/master"
+    else
+        log_warn "Could not determine remote default branch; skipping self-update."
+        if [[ "${do_update_only}" -eq 1 ]]; then
+            exit 1
+        fi
         return 0
     fi
-    upstream_head="$(git -C "${MINSTALLER_ROOT}" rev-parse origin/main)"
 
-    if [[ -z "${current_head}" || "${current_head}" == "${upstream_head}" ]]; then
-        if [[ "${do_update}" -eq 1 ]]; then
+    local upstream_head
+    upstream_head="$(git -C "${MINSTALLER_ROOT}" rev-parse "${remote_branch}" 2>/dev/null || true)"
+
+    if [[ -z "${upstream_head}" ]]; then
+        log_warn "Unable to read ${remote_branch}; skipping self-update."
+        if [[ "${do_update_only}" -eq 1 ]]; then
+            exit 1
+        fi
+        return 0
+    fi
+
+    if [[ -n "${current_head}" && "${current_head}" == "${upstream_head}" ]]; then
+        log_debug "mInstaller already up to date (${current_head:0:7})."
+        if [[ "${do_update_only}" -eq 1 ]]; then
             log_ok "mInstaller is already up to date."
             exit 0
         fi
-        log_debug "mInstaller already up to date."
         return 0
     fi
 
     if [[ -n "$(git -C "${MINSTALLER_ROOT}" status --porcelain 2>/dev/null)" ]]; then
-        log_warn "Local changes detected in mInstaller; skipping self-update."
+        log_warn "Local changes detected in mInstaller checkout; skipping auto-update to avoid losing work."
+        log_warn "Commit, stash, or revert your changes (or use --no-self-update) to silence this warning."
+        if [[ "${do_update_only}" -eq 1 ]]; then
+            exit 1
+        fi
         return 0
     fi
 
-    if [[ "${do_update}" -eq 1 ]]; then
-        log_info "Updating mInstaller from origin/main..."
-        if ! git -C "${MINSTALLER_ROOT}" pull --ff-only --quiet origin main; then
+    log_info "Updating mInstaller: ${current_head:0:7} → ${upstream_head:0:7} (${remote_branch})"
+    if ! git -C "${MINSTALLER_ROOT}" merge --ff-only --quiet "${upstream_head}"; then
+        log_warn "Fast-forward merge to ${remote_branch} failed; continuing with current version."
+        if [[ "${do_update_only}" -eq 1 ]]; then
             die "mInstaller self-update failed. Resolve git issues and retry."
         fi
-        log_ok "mInstaller updated successfully. Re-run your command with the updated version."
+        return 0
+    fi
+    log_ok "mInstaller updated to ${upstream_head:0:7}."
+
+    if [[ "${do_update_only}" -eq 1 ]]; then
+        log_ok "Self-update complete. Re-run mInstaller to use the new version."
         exit 0
     fi
 
-    log_warn "A newer mInstaller version is available. Run './mInstaller.sh --self-update' before proceeding if you want the latest version."
+    # Re-exec the freshly pulled script with the original arguments, setting a
+    # guard env var so the new process does not loop back into self-update.
+    local script_path="${MINSTALLER_ROOT}/$(basename "${BASH_SOURCE[0]}")"
+    if [[ ! -x "${script_path}" ]]; then
+        # Fall back to the resolved path of the current script.
+        script_path="$(readlink -f "${BASH_SOURCE[0]}")"
+    fi
+    log_info "Re-executing updated mInstaller..."
+    export MINSTALLER_SKIP_SELF_UPDATE=1
+    exec "${script_path}" "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -397,6 +496,7 @@ parse_args() {
         case "${_arg}" in
             -h|--help|-l|--list|-V|--version) ;;
             -n|--dry-run|-v|--verbose)        ;;
+            -U|--self-update|--no-self-update) ;;
             -y|--noninteractive) NONINTERACTIVE=1; export NONINTERACTIVE ;;
             --) break ;;
             *) _has_module_arg=1 ;;
@@ -434,6 +534,10 @@ parse_args() {
                 export NONINTERACTIVE
                 ;;
             -U|--self-update)
+                # Handled in self_update_if_needed (runs before parse_args).
+                ;;
+            --no-self-update)
+                # Handled in self_update_if_needed (runs before parse_args).
                 ;;
             -v|--verbose)
                 MINSTALLER_LOG_LEVEL="${LOG_LEVEL_DEBUG}"
