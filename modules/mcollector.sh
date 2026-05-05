@@ -5,15 +5,24 @@
 #
 # What this module does:
 #   1. Preflight: check for conflicting services on required ports.
-#   2. Install build-time apt packages (build-essential, libssl-dev, git).
+#   2. Install build-time apt packages (build-essential, libssl-dev, git, xxd).
+#      xxd is required by the mCollector Makefile to embed assets
+#      (index.html, mCollector.ps1) into the binary via `xxd -i`.
 #   3. Clone (or update) the mCollector repository to /opt/mCollector/src.
 #   4. Build the binary with make.
 #   5. Keep only /opt/mCollector/src as a subfolder; place runtime files at
 #      the root of /opt/mCollector.
-#   6. Copy the binary and required web/runtime files beside src/.
-#   7. Set file permissions without creating any dedicated system user.
-#   8. Set CAP_NET_BIND_SERVICE on the binary (so it can run as non-root).
-#   9. Finish with manual-run guidance only. No service unit is installed.
+#   6. Copy the binary and koondraport.py beside src/. index.html and
+#      mCollector.ps1 are NOT copied to the runtime root because they are
+#      embedded into the binary at build time (mCollector >= 1.4.0).
+#   7. Remove stale loose files left by older installer versions
+#      (index.html, mCollector.ps1, embedded_assets.h) from the runtime root.
+#      Preserved at the runtime root: mCollector binary, koondraport.py,
+#      cert.pem/key.pem (if user-provided), uploads/ (captured data), and
+#      the src/ build checkout.
+#   8. Set file permissions without creating any dedicated system user.
+#   9. Set CAP_NET_BIND_SERVICE on the binary (so it can run as non-root).
+#  10. Finish with manual-run guidance only. No service unit is installed.
 #
 # Conflicting services (printed and optionally disabled):
 #   systemd-resolved (port 5355/UDP LLMNR)
@@ -32,12 +41,22 @@ _MC_OPT_DIR="/opt/mCollector"
 _MC_SRC_DIR="${_MC_OPT_DIR}/src"
 _MC_TLS_CERT="${_MC_OPT_DIR}/cert.pem"
 _MC_TLS_KEY="${_MC_OPT_DIR}/key.pem"
-_MC_INDEX_HTML="${_MC_OPT_DIR}/index.html"
-_MC_PS1="${_MC_OPT_DIR}/mCollector.ps1"
 _MC_KOONDRAPORT="${_MC_OPT_DIR}/koondraport.py"
 _MC_UPLOADS_DIR="${_MC_OPT_DIR}/uploads"
 _MC_BINARY="${_MC_OPT_DIR}/mCollector"
 _MC_HASHES_FILE="${_MC_UPLOADS_DIR}/hashes.txt"
+
+# Stale loose files that previous installer versions left at the runtime
+# root. Now embedded in the binary at build time via `xxd -i`, so we
+# remove them on every install to keep /opt/mCollector clean.
+#   - index.html       : web UI, embedded via embedded_assets.h
+#   - mCollector.ps1   : Windows agent payload, embedded via embedded_assets.h
+#   - embedded_assets.h: generated header, build artifact only
+_MC_STALE_RUNTIME_FILES=(
+    "${_MC_OPT_DIR}/index.html"
+    "${_MC_OPT_DIR}/mCollector.ps1"
+    "${_MC_OPT_DIR}/embedded_assets.h"
+)
 
 # ---------------------------------------------------------------------------
 # _mc_conflicting_services — associative description of conflicts
@@ -100,9 +119,11 @@ module_mcollector_install() {
     log_step "mCollector — Installation"
 
     # --- 1. apt packages -------------------------------------------------------
+    # xxd is required by the mCollector Makefile to generate embedded_assets.h
+    # from index.html and mCollector.ps1 (`xxd -i`).
     log_step "mCollector — Installing apt packages"
     apt_update
-    apt_install build-essential libssl-dev git
+    apt_install build-essential libssl-dev git xxd
 
     # --- 2. Clone / update source ---------------------------------------------
     log_step "mCollector — Cloning/updating repository"
@@ -128,24 +149,45 @@ module_mcollector_install() {
     log_step "mCollector — Creating flat runtime layout"
     system_mkdir "${_MC_UPLOADS_DIR}"  ""  ""
 
-    # --- 5. Copy binary and assets --------------------------------------------
+    # --- 5. Copy binary and runtime files -------------------------------------
+    # NOTE: index.html and mCollector.ps1 are intentionally NOT copied to the
+    # runtime root. As of mCollector >= 1.4.0 they are embedded into the
+    # binary at build time via `xxd -i` (see embedded_assets.h). Only files
+    # that the binary genuinely reads from disk at runtime, or that the
+    # operator runs manually, should live in /opt/mCollector.
+    #
+    # Preserved at /opt/mCollector:
+    #   - mCollector       (binary)
+    #   - koondraport.py   (manual fleet-report generator, run by operator)
+    #   - cert.pem/key.pem (if operator placed them there; not managed here)
+    #   - uploads/         (captured data; never touched by installer)
+    #   - src/             (build checkout; required for rebuilds)
     log_step "mCollector — Installing binary and required files"
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
         log_dryrun "[build] install built mCollector binary at '${_MC_BINARY}' with mode 750"
-        log_dryrun "[install] cp '${_MC_SRC_DIR}/index.html' '${_MC_INDEX_HTML}'"
-        log_dryrun "[install] cp '${_MC_SRC_DIR}/mCollector.ps1' '${_MC_PS1}'"
         log_dryrun "[install] cp '${_MC_SRC_DIR}/koondraport.py' '${_MC_KOONDRAPORT}'"
+        for _stale in "${_MC_STALE_RUNTIME_FILES[@]}"; do
+            log_dryrun "[install] rm -f '${_stale}' (stale; embedded in binary)"
+        done
     else
         [[ -f "${_MC_BINARY}" ]] \
             || die "Built mCollector binary not found at '${_MC_BINARY}'"
         chmod 750 "${_MC_BINARY}"
 
-        [[ -f "${_MC_SRC_DIR}/index.html" ]] \
-            && cp "${_MC_SRC_DIR}/index.html" "${_MC_INDEX_HTML}"
-        [[ -f "${_MC_SRC_DIR}/mCollector.ps1" ]] \
-            && cp "${_MC_SRC_DIR}/mCollector.ps1" "${_MC_PS1}"
         [[ -f "${_MC_SRC_DIR}/koondraport.py" ]] \
             && cp "${_MC_SRC_DIR}/koondraport.py" "${_MC_KOONDRAPORT}"
+
+        # Remove stale loose files from previous installer versions. These
+        # are now embedded in the binary; leaving them on disk is misleading
+        # (operators may edit them expecting changes to take effect).
+        for _stale in "${_MC_STALE_RUNTIME_FILES[@]}"; do
+            if [[ -e "${_stale}" ]]; then
+                log_info "Removing stale runtime file: ${_stale}"
+                rm -f "${_stale}" \
+                    || log_warn "Failed to remove stale file: ${_stale}"
+            fi
+        done
+
         log_ok "Binary and runtime files installed"
     fi
 
