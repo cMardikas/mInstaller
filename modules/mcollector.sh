@@ -15,14 +15,26 @@
 #   6. Copy the binary and koondraport.py beside src/. index.html and
 #      mCollector.ps1 are NOT copied to the runtime root because they are
 #      embedded into the binary at build time (mCollector >= 1.4.0).
-#   7. Remove stale loose files left by older installer versions
-#      (index.html, mCollector.ps1, embedded_assets.h) from the runtime root.
-#      Preserved at the runtime root: mCollector binary, koondraport.py,
-#      cert.pem/key.pem (if user-provided), uploads/ (captured data), and
+#   7. Ensure /opt/mCollector/public/ exists. As of mCollector >= 1.5.0,
+#      static downloadable content (e.g. PingCastle.exe) is served from
+#      this folder; URLs remain /<filename> but the binary maps them to
+#      public/<filename>. The directory is created if missing and
+#      preserved across upgrades (operator content lives here).
+#   8. Migrate stale downloadable files left at the runtime root by older
+#      installer versions into public/. Currently this handles
+#      PingCastle.exe: if /opt/mCollector/PingCastle.exe exists and
+#      /opt/mCollector/public/PingCastle.exe does NOT, the file is moved
+#      into public/. If the destination already exists, the loose copy
+#      is left in place with a warning so the operator can resolve it.
+#   9. Remove stale loose files left by older installer versions
+#      (index.html, mCollector.ps1, embedded_assets.h) from the runtime
+#      root. Preserved at the runtime root: mCollector binary,
+#      koondraport.py, cert.pem/key.pem (if user-provided), uploads/
+#      (captured data), public/ (static downloads served at /<file>), and
 #      the src/ build checkout.
-#   8. Set file permissions without creating any dedicated system user.
-#   9. Set CAP_NET_BIND_SERVICE on the binary (so it can run as non-root).
-#  10. Finish with manual-run guidance only. No service unit is installed.
+#  10. Set file permissions without creating any dedicated system user.
+#  11. Set CAP_NET_BIND_SERVICE on the binary (so it can run as non-root).
+#  12. Finish with manual-run guidance only. No service unit is installed.
 #
 # Conflicting services (printed and optionally disabled):
 #   systemd-resolved (port 5355/UDP LLMNR)
@@ -43,8 +55,19 @@ _MC_TLS_CERT="${_MC_OPT_DIR}/cert.pem"
 _MC_TLS_KEY="${_MC_OPT_DIR}/key.pem"
 _MC_KOONDRAPORT="${_MC_OPT_DIR}/koondraport.py"
 _MC_UPLOADS_DIR="${_MC_OPT_DIR}/uploads"
+_MC_PUBLIC_DIR="${_MC_OPT_DIR}/public"
 _MC_BINARY="${_MC_OPT_DIR}/mCollector"
 _MC_HASHES_FILE="${_MC_UPLOADS_DIR}/hashes.txt"
+
+# Loose downloadable files that older installer/operator versions placed
+# at the runtime root. As of mCollector >= 1.5.0, the binary serves
+# static downloads from public/, so these files are migrated into
+# public/<basename> on upgrade where safe. URLs remain /<basename>.
+# Format: "<source-path>" — destination is always
+# "${_MC_PUBLIC_DIR}/$(basename source)".
+_MC_PUBLIC_MIGRATE_FILES=(
+    "${_MC_OPT_DIR}/PingCastle.exe"
+)
 
 # Stale loose files that previous installer versions left at the runtime
 # root. Now embedded in the binary at build time via `xxd -i`, so we
@@ -146,8 +169,13 @@ module_mcollector_install() {
     fi
 
     # --- 4. Runtime layout ----------------------------------------------------
+    # uploads/ holds captured data; public/ holds operator-supplied static
+    # downloads that the binary serves at /<filename> (mapped to
+    # public/<filename>). Both directories are created if missing and
+    # preserved across upgrades — the installer never deletes their contents.
     log_step "mCollector — Creating flat runtime layout"
     system_mkdir "${_MC_UPLOADS_DIR}"  ""  ""
+    system_mkdir "${_MC_PUBLIC_DIR}"   ""  ""
 
     # --- 5. Copy binary and runtime files -------------------------------------
     # NOTE: index.html and mCollector.ps1 are intentionally NOT copied to the
@@ -166,6 +194,9 @@ module_mcollector_install() {
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
         log_dryrun "[build] install built mCollector binary at '${_MC_BINARY}' with mode 750"
         log_dryrun "[install] cp '${_MC_SRC_DIR}/koondraport.py' '${_MC_KOONDRAPORT}'"
+        for _src in "${_MC_PUBLIC_MIGRATE_FILES[@]}"; do
+            log_dryrun "[install] if '${_src}' exists and '${_MC_PUBLIC_DIR}/$(basename "${_src}")' does not, mv '${_src}' → '${_MC_PUBLIC_DIR}/'"
+        done
         for _stale in "${_MC_STALE_RUNTIME_FILES[@]}"; do
             log_dryrun "[install] rm -f '${_stale}' (stale; embedded in binary)"
         done
@@ -176,6 +207,28 @@ module_mcollector_install() {
 
         [[ -f "${_MC_SRC_DIR}/koondraport.py" ]] \
             && cp "${_MC_SRC_DIR}/koondraport.py" "${_MC_KOONDRAPORT}"
+
+        # Migrate loose downloadable files into public/. mCollector >= 1.5.0
+        # serves these from public/<file> while keeping URLs at /<file>, so
+        # legacy copies at the runtime root are no longer reachable.
+        # Conservative migration: only move when the destination does not
+        # already exist. If both exist, the operator likely placed the new
+        # one deliberately — leave both in place and warn.
+        local _src _dest
+        for _src in "${_MC_PUBLIC_MIGRATE_FILES[@]}"; do
+            [[ -f "${_src}" ]] || continue
+            _dest="${_MC_PUBLIC_DIR}/$(basename "${_src}")"
+            if [[ -e "${_dest}" ]]; then
+                log_warn "Both '${_src}' and '${_dest}' exist; leaving the loose copy in place. Remove '${_src}' manually once you have confirmed '${_dest}' is the version you want served."
+                continue
+            fi
+            log_info "Migrating '${_src}' → '${_dest}'"
+            if mv "${_src}" "${_dest}"; then
+                log_ok "Moved '${_src}' to public/"
+            else
+                log_warn "Failed to migrate '${_src}' to '${_dest}'; leaving source in place."
+            fi
+        done
 
         # Remove stale loose files from previous installer versions. These
         # are now embedded in the binary; leaving them on disk is misleading
@@ -194,6 +247,7 @@ module_mcollector_install() {
     # --- 6. Permissions -------------------------------------------------------
     log_step "mCollector — Setting permissions"
     system_chmod "750" "${_MC_UPLOADS_DIR}"
+    system_chmod "755" "${_MC_PUBLIC_DIR}"
 
     if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
         log_dryrun "[install] touch '${_MC_HASHES_FILE}' (if absent)"
